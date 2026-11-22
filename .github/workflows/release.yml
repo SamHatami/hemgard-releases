@@ -1,0 +1,136 @@
+# The release workflow. It lives in the PUBLIC repository SamHatami/hemgard-releases as
+# .github/workflows/release.yml (copied there by release/setup-releases-repo.ps1); this copy in
+# the source repository is the one to edit.
+#
+# Started by release/release.ps1 (or by hand from the Actions tab) with a source tag. It checks
+# out the private source with a read-only deploy key, builds Windows and macOS side by side,
+# then waits for Sam's approval (the "release" environment) before signing and creating a DRAFT
+# release. Sam publishes the draft after trying it; only then do players see it.
+#
+# Secrets (repository settings of hemgard-releases):
+#   SOURCE_DEPLOY_KEY   private half of a read-only deploy key on SamHatami/Hemgard
+#   RELEASE_KEY         the minisign secret key from `hemgard-release keygen`, and
+#   RELEASE_KEY_PASSWORD  its password (both in the "release" environment, so only an
+#                       approved run can read them)
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Source tag to build, e.g. v0.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x86_64
+          - os: macos-14
+            platform: macos-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@v4
+        with:
+          repository: SamHatami/Hemgard
+          ref: ${{ inputs.tag }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test the data crates (saves, updater, paths)
+        run: cargo test --release -p hemma-house -p hemma-catalog -p hemma-platform -p hemma-update
+
+      - name: Build (Windows, static C runtime so no Visual C++ install is needed)
+        if: runner.os == 'Windows'
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release -p hemma -p hemma-launcher
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = '${{ inputs.tag }}'.TrimStart('v')
+          ./release/package-windows.ps1 -Version $version
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: cargo build --release -p hemma
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: bash release/package-mac.sh "${TAG#v}"
+        env:
+          TAG: ${{ inputs.tag }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: |
+            dist/*.zip
+            dist/*.exe
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Check out the source (for the notes and the release tool)
+        uses: actions/checkout@v4
+        with:
+          repository: SamHatami/Hemgard
+          ref: ${{ inputs.tag }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write and sign latest.json
+        env:
+          RELEASE_KEY: ${{ secrets.RELEASE_KEY }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          version="${TAG#v}"
+          base="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+          save_format=$(grep -oP 'CURRENT_VERSION: u32 = \K[0-9]+' crates/house/src/model.rs)
+          cargo run --release -p hemma-release -- manifest dist/latest.json "$version" "$save_format" \
+            "release-notes/$version.sv.md" "release-notes/$version.en.md" "$base" \
+            "windows-x86_64=dist/Hemgard-$version-windows.zip" \
+            "macos-aarch64=dist/Hemgard-$version-mac.zip"
+          cargo run --release -p hemma-release -- sign - dist/latest.json dist/*.zip
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          version="${TAG#v}"
+          {
+            cat "release-notes/$version.sv.md"
+            echo
+            echo "---"
+            echo
+            cat "release-notes/$version.en.md"
+          } > dist/notes.md
+          gh release create "$TAG" --repo "${{ github.repository }}" --draft \
+            --title "Hemgård $version" --notes-file dist/notes.md \
+            dist/latest.json dist/latest.json.minisig dist/*.zip dist/*.zip.minisig dist/*.exe
