@@ -33,11 +33,16 @@ jobs:
       fail-fast: true
       matrix:
         include:
+          # Windows links the C runtime in, so players need no Visual C++ install.
           - os: windows-latest
             platform: windows-x86_64
+            rustflags: -C target-feature=+crt-static
           - os: macos-14
             platform: macos-aarch64
+            rustflags: ""
     runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
     steps:
       - name: Check out the source
         uses: actions/checkout@v4
@@ -52,11 +57,13 @@ jobs:
       - name: Test the data crates (saves, updater, paths)
         run: cargo test --release -p hemma-house -p hemma-catalog -p hemma-platform -p hemma-update
 
-      - name: Build (Windows, static C runtime so no Visual C++ install is needed)
+      - name: Build (Windows)
         if: runner.os == 'Windows'
-        env:
-          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release -p hemma -p hemma-launcher
+
+      - name: Install the latest Inno Setup (the installer script needs 6.3 or newer)
+        if: runner.os == 'Windows'
+        run: choco upgrade innosetup --no-progress -y
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
