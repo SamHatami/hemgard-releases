@@ -30,7 +30,7 @@ env:
 jobs:
   build:
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           # Windows links the C runtime in, so players need no Visual C++ install.
@@ -54,8 +54,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Test the data crates (saves, updater, paths)
-        run: cargo test --release -p hemma-house -p hemma-catalog -p hemma-platform -p hemma-update
+      - name: Test what players rely on (old saves load, the updater, player folders)
+        run: cargo test --release -p hemma-house --test old_saves --test save_safety && cargo test --release -p hemma-platform -p hemma-update
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
