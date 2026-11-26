@@ -3,9 +3,12 @@
 # the source repository is the one to edit.
 #
 # Started by release/release.ps1 (or by hand from the Actions tab) with a source tag. It checks
-# out the private source with a read-only deploy key, builds Windows and macOS side by side,
-# then waits for Sam's approval (the "release" environment) before signing and creating a DRAFT
-# release. Sam publishes the draft after trying it; only then do players see it.
+# out the private source with a read-only deploy key, builds Windows, macOS and Linux side by
+# side, then waits for Sam's approval (the "release" environment) before signing and creating a
+# DRAFT release. Sam publishes the draft after trying it; only then do players see it.
+#
+# To try the builds without releasing anything, start it with build_only ticked; then `tag` may
+# also be a branch such as main. The packages are kept as the run's artifacts for a few days.
 #
 # Secrets (repository settings of hemgard-releases):
 #   SOURCE_DEPLOY_KEY   private half of a read-only deploy key on SamHatami/Hemgard
@@ -20,6 +23,10 @@ on:
       tag:
         description: "Source tag to build, e.g. v0.2.0"
         required: true
+      build_only:
+        description: "Only build and package (no signing, no release)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -40,6 +47,11 @@ jobs:
           - os: macos-latest
             platform: macos-aarch64
             rustflags: ""
+          # The oldest Ubuntu GitHub still offers, so the game runs on every Linux with a C
+          # library (glibc 2.35) at least that new: Ubuntu 22.04, Debian 12, Fedora 36, Mint 21.
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+            rustflags: ""
     runs-on: ${{ matrix.os }}
     env:
       RUSTFLAGS: ${{ matrix.rustflags }}
@@ -53,6 +65,15 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+
+      # Headers for sound (ALSA), game pads (udev) and windows (X11, Wayland). Players need only
+      # the libraries themselves, which every desktop Linux already has.
+      - name: Install build libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev \
+            libudev-dev libx11-dev libxkbcommon-dev libwayland-dev
 
       - name: Test what players rely on (old saves load, the updater, player folders)
         run: cargo test --release -p hemma-house --test old_saves --test save_safety && cargo test --release -p hemma-platform -p hemma-update
@@ -82,16 +103,28 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
 
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cargo build --release -p hemma -p hemma-launcher
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: bash release/package-linux.sh "${TAG#v}"
+        env:
+          TAG: ${{ inputs.tag }}
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}
           path: |
             dist/*.zip
             dist/*.exe
+            dist/*.tar.gz
           if-no-files-found: error
 
   publish:
     needs: build
+    if: ${{ !inputs.build_only }}
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -122,7 +155,8 @@ jobs:
           cargo run --release -p hemma-release -- manifest dist/latest.json "$version" "$save_format" \
             "release-notes/$version.sv.md" "release-notes/$version.en.md" "$base" \
             "windows-x86_64=dist/Hemgard-$version-windows.zip" \
-            "macos-aarch64=dist/Hemgard-$version-mac.zip"
+            "macos-aarch64=dist/Hemgard-$version-mac.zip" \
+            "linux-x86_64=dist/Hemgard-$version-linux.zip"
           cargo run --release -p hemma-release -- sign - dist/latest.json dist/*.zip
 
       - name: Create the draft release
@@ -140,4 +174,5 @@ jobs:
           } > dist/notes.md
           gh release create "$TAG" --repo "${{ github.repository }}" --draft \
             --title "Hemgård $version" --notes-file dist/notes.md \
-            dist/latest.json dist/latest.json.minisig dist/*.zip dist/*.zip.minisig dist/*.exe
+            dist/latest.json dist/latest.json.minisig dist/*.zip dist/*.zip.minisig dist/*.exe \
+            dist/*.tar.gz

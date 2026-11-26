@@ -21,6 +21,16 @@ och välj filen för din dator under *Assets*.
    öppna **Systeminställningar → Integritet och säkerhet**, skrolla ner och klicka
    **Öppna ändå** vid Hemgard. Det behövs bara första gången.
 
+## Linux (64-bitars, Ubuntu 22.04 eller nyare)
+
+1. Ladda ner `Hemgard-<version>-linux.tar.gz` och packa upp den, till exempel med
+   `tar xzf Hemgard-<version>-linux.tar.gz`.
+2. Kör `Hemgard/install.sh`. Hemgård hamnar i programmenyn och kan också startas med `hemgard`.
+   Inget administratörslösenord behövs. (Du kan också starta `Hemgard/hemgard` direkt utan att
+   installera.)
+3. Ta bort spelet med `~/.local/share/hemgard-game/install.sh --uninstall`. Dina sparade hem
+   finns kvar.
+
 ## Uppdateringar
 
 När en ny version finns säger spelet till i startmenyn och frågar om det ska uppdatera.
@@ -35,4 +45,6 @@ Välj **Skicka felrapport** i pausmenyn och skriv vad som hände. Sam får den d
 *English:* Hemgård is a calm game about building and furnishing a Swedish home. Download the
 file for your computer from the latest release above. On first start, Windows may ask you to
 confirm (More info, Run anyway) and macOS may ask you to allow it in System Settings, Privacy
-& Security (Open Anyway). The game updates itself after that.
+& Security (Open Anyway). On Linux, unpack the tar.gz and run `Hemgard/install.sh` (no
+administrator password; `--uninstall` removes it again, keeping your saves). The game updates
+itself after that.
